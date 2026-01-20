@@ -1,0 +1,10 @@
+# Make sure Node is installed
+node -v   # should be >= 18
+npm -v
+
+# Install frontend dependencies
+npm install   # (or npm ci if package-lock.json is stable)
+
+# Start dev server
+npm run dev
+# → usually runs at http://localhost:5173
