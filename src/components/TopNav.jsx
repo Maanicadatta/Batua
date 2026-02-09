@@ -46,12 +46,30 @@ export default function TopNav() {
 
   return (
     <>
-      <nav className="nav">
-        <Link
-          to="/your-batua"
-          className="logo-wallet"
-          aria-label="Your Batua wallet"
-        />
+  <nav className="nav">
+  {/* LEFT */}
+  <div style={{ display: "flex", alignItems: "center" }}>
+    {/* Wallet icon → Home */}
+    <Link
+      to="/"
+      className="logo-wallet"
+      aria-label="Home"
+      title="Home"
+    />
+
+    {/* Batua.ai → Your Batua (styled like nav items) */}
+    <NavLink
+      to="/your-batua"
+      className={({ isActive }) =>
+        `nav-item ${isActive ? "active" : ""}`
+      }
+      style={{ marginLeft: "24px" }}
+    >
+      BATUA.AI
+    </NavLink>
+  </div>
+
+
 
         <div className="nav-links">
           <NavLink to="/stocks" className={({ isActive }) => (isActive ? "active" : undefined)}>

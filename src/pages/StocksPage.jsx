@@ -7,6 +7,10 @@ import {
   tradeTabBarStyle,
   makeTradeTabStyle,
 } from "../styles/tradePageStyles";
+const API_BASE =
+  (import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
+  "http://localhost:5050";
+
 
 /**
  * Sub-tabs shown under the main "Stocks" page
@@ -89,33 +93,13 @@ const TIMEFRAMES = [
   { label: "ALL", range: "max", interval: "1mo" },
 ];
 
+const RECENTLY_VIEWED_STORAGE_KEY = "recentlyViewedStocks";
 
-const MOST_BOUGHT_PLACEHOLDERS = [
-  {
-    name: "Kaynes Technology",
-    price: "₹3,890.50",
-    change: "-440.50 (10.17%)",
-    positive: false,
-  },
-  {
-    name: "Meesho",
-    price: "₹170.09",
-    change: "+59.09 (53.23%)",
-    positive: true,
-  },
-  {
-    name: "BSE",
-    price: "₹2,581.70",
-    change: "-134.10 (4.94%)",
-    positive: false,
-  },
-  {
-    name: "See more",
-    price: "",
-    change: "",
-    positive: true,
-    isSeeMore: true,
-  },
+const RECENTLY_VIEWED_PLACEHOLDERS = [
+  { slot: 0 },
+  { slot: 1 },
+  { slot: 2 },
+  { name: "See more", isSeeMore: true },
 ];
 
 function StocksTab() {
@@ -130,23 +114,63 @@ function StocksTab() {
   const [tf, setTf] = useState(TIMEFRAMES[6]); // default 1Y
   const [candles, setCandles] = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
-
-  const fetchCandles = async (ticker, range, interval) => {
-    setChartLoading(true);
+  const [recentlyViewed, setRecentlyViewed] = useState(() => {
     try {
-      const url = `https://batua-ai-0qo6.onrender.com/stock_history?ticker=${encodeURIComponent(
-        ticker
-      )}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`;
-
-      const res = await fetch(url);
-      if (!res.ok) return;
-
-      const data = await res.json();
-      setCandles(Array.isArray(data) ? data : []);
-    } finally {
-      setChartLoading(false);
+      const raw = localStorage.getItem(RECENTLY_VIEWED_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
     }
+  });
+
+  const pushRecentlyViewed = (stock, details) => {
+    // Build a clean object for the tiles
+    const payload = {
+  ticker_symbol: stock?.ticker_symbol,
+  company_name: stock?.company_name,
+  exchange: stock?.exchange,     // ✅ add
+  country: stock?.country,       // optional
+  currency: stock?.currency,     // optional
+  last_price: details?.last_price,
+  change: details?.change,
+  change_pct: details?.change_pct,
+};
+
+    setRecentlyViewed((prev) => {
+      const withoutDupes = prev.filter(
+  (s) =>
+    !(
+      s.ticker_symbol === payload.ticker_symbol &&
+      (s.exchange || "") === (payload.exchange || "")
+    )
+);
+
+      const next = [payload, ...withoutDupes].slice(0, 3);
+      localStorage.setItem(RECENTLY_VIEWED_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   };
+
+ const fetchCandles = async (ticker, exchange, range, interval) => {
+  setChartLoading(true);
+  try {
+    const url = `${API_BASE}/api/stocks/history?symbol=${encodeURIComponent(
+      ticker
+    )}&exchange=${encodeURIComponent(exchange || "")}&range=${encodeURIComponent(
+      range
+    )}&interval=${encodeURIComponent(interval)}`;
+
+    const res = await fetch(url);
+    if (!res.ok) return;
+
+    const data = await res.json();
+    setCandles(Array.isArray(data) ? data : []);
+  } finally {
+    setChartLoading(false);
+  }
+};
+
+
 
   const searchRow = {
     display: "flex",
@@ -222,9 +246,8 @@ function StocksTab() {
     setLastQuery(trimmed);
 
     try {
-      const url = `https://batua-ai-0qo6.onrender.com/stock_search?company=${encodeURIComponent(
-        trimmed
-      )}`;
+      const url = `${API_BASE}/api/stocks/search?q=${encodeURIComponent(trimmed)}`;
+
 
       const res = await fetch(url, {
         method: "GET",
@@ -250,46 +273,53 @@ function StocksTab() {
     }
   };
 
-  const fetchStockDetails = async (ticker) => {
-    setDetailsLoading(true);
-    setStockDetails(null);
+const fetchStockDetails = async (ticker, exchange, selected) => {
+  setDetailsLoading(true);
+  setStockDetails(null);
 
-    try {
-      const url = `https://batua-ai-0qo6.onrender.com/stock_details?ticker=${encodeURIComponent(
-        ticker
-      )}`;
+  try {
+    const url = `${API_BASE}/api/stocks/details?symbol=${encodeURIComponent(
+      ticker
+    )}&exchange=${encodeURIComponent(exchange || "")}`;
 
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
 
-      if (!res.ok) {
-        const text = await res.text();
-        console.error("Stock details error:", res.status, text);
-        return;
-      }
-
-      const data = await res.json();
-      setStockDetails(data);
-    } catch (err) {
-      console.error("Error fetching stock details:", err);
-    } finally {
-      setDetailsLoading(false);
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Stock details error:", res.status, text);
+      return;
     }
-  };
 
-  const handleSelectStock = (stock) => {
-    const label = `${stock.company_name.trim()} (${stock.ticker_symbol})`;
-    setSearchTerm(label);
-    setShowDropdown(false);
-    setSelectedStock(stock);
-    fetchStockDetails(stock.ticker_symbol);
+    const data = await res.json();
+    setStockDetails(data);
 
-    fetchCandles(stock.ticker_symbol, tf.range, tf.interval);
-  };
+    // ✅ store in "Recently Viewed" after we have details (price/change)
+    if (selected) {
+      pushRecentlyViewed(selected, data);
+    }
+  } catch (err) {
+    console.error("Error fetching stock details:", err);
+  } finally {
+    setDetailsLoading(false);
+  }
+};
+
+
+ const handleSelectStock = (stock) => {
+  const label = `${stock.company_name?.trim?.() || stock.company_name} (${stock.ticker_symbol})`;
+  setSearchTerm(label);
+  setShowDropdown(false);
+  setSelectedStock(stock);
+
+  // ✅ fetch details + store in recently viewed (pass exchange)
+  fetchStockDetails(stock.ticker_symbol, stock.exchange, stock);
+
+  // chart (pass exchange)
+  fetchCandles(stock.ticker_symbol, stock.exchange, tf.range, tf.interval);
+};
 
 
   const handleBlur = () => {
@@ -298,12 +328,10 @@ function StocksTab() {
 useEffect(() => {
   if (!selectedStock?.ticker_symbol) return;
 
-  // fetch immediately
-  fetchCandles(selectedStock.ticker_symbol, tf.range, tf.interval);
+  fetchCandles(selectedStock.ticker_symbol, selectedStock.exchange, tf.range, tf.interval);
 
-  // then refresh every 60s
   const id = setInterval(() => {
-    fetchCandles(selectedStock.ticker_symbol, tf.range, tf.interval);
+    fetchCandles(selectedStock.ticker_symbol, selectedStock.exchange, tf.range, tf.interval);
   }, 60000);
 
   return () => clearInterval(id);
@@ -419,44 +447,96 @@ useEffect(() => {
                     {stock.company_name}
                   </div>
                   <div style={dropdownItemSecondary}>
-                    {stock.ticker_symbol}
-                  </div>
+  {stock.ticker_symbol}{stock.exchange ? ` • ${stock.exchange}` : ""}{stock.country ? ` • ${stock.country}` : ""}
+</div>
+
                 </button>
               ))}
           </div>
         )}
       </div>
 
-      {/* Most bought on Batua – only show when no stock is selected */}
+           {/* Recently Viewed – only show when no stock is selected */}
       {!selectedStock && (
         <div style={mostBoughtWrapper}>
-          <div style={mostBoughtTitle}>Most Bought</div>
+          <div style={mostBoughtTitle}>Recently Viewed</div>
+
           <div style={mostBoughtGrid}>
-            {MOST_BOUGHT_PLACEHOLDERS.map((s) => (
-              <div key={s.name} style={mostBoughtCard}>
-                {!s.isSeeMore ? (
-                  <>
-                    <div style={mostBoughtName}>{s.name}</div>
-                    <div>
-                      <div style={mostBoughtPrice}>{s.price}</div>
-                      <div style={mostBoughtChange(s.positive)}>
-                        {s.change}
+            {RECENTLY_VIEWED_PLACEHOLDERS.map((s, idx) => {
+              if (s.isSeeMore) {
+                return (
+                  <div key="see-more" style={mostBoughtCard}>
+                    <div style={seeMoreCardInner}>
+                      <div style={mostBoughtName}>See more</div>
+                      <div style={{ fontSize: "12px", opacity: 0.7 }}>
+                        Explore all popular stocks on Batua →
                       </div>
                     </div>
-                  </>
-                ) : (
-                  <div style={seeMoreCardInner}>
-                    <div style={mostBoughtName}>See more</div>
+                  </div>
+                );
+              }
+
+              const item = recentlyViewed[s.slot];
+
+              // Empty placeholder card
+              if (!item) {
+                return (
+                  <div
+                    key={`empty-${s.slot}`}
+                    style={{
+                      ...mostBoughtCard,
+                      opacity: 0.45,
+                      borderStyle: "dashed",
+                    }}
+                  >
+                    <div style={mostBoughtName}>No recent stock</div>
                     <div style={{ fontSize: "12px", opacity: 0.7 }}>
-                      Explore all popular stocks on Batua →
+                      Search and open a stock to see it here
                     </div>
                   </div>
-                )}
-              </div>
-            ))}
+                );
+              }
+
+              // Filled card
+              const price = item.last_price ? `${item.last_price}` : "";
+              const change = item.change_pct
+                ? `${item.change ?? ""} (${item.change_pct}%)`
+                : "";
+
+              const positive = Number(item.change ?? 0) >= 0;
+
+              return (
+                <div
+                  key={item.ticker_symbol}
+                  style={mostBoughtCard}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() =>
+  handleSelectStock({
+    company_name: item.company_name,
+    ticker_symbol: item.ticker_symbol,
+    exchange: item.exchange,     // ✅
+    country: item.country,
+    currency: item.currency,
+  })
+}
+
+                >
+                  <div style={mostBoughtName}>{item.company_name}</div>
+
+                  <div>
+                    <div style={mostBoughtPrice}>
+                      {price ? `${price} INR` : ""}
+                    </div>
+                    <div style={mostBoughtChange(positive)}>{change}</div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
+
 
       {/* Stock detail view */}
 
